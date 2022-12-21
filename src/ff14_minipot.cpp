@@ -8,12 +8,14 @@
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
+#include <algorithm>
 
 using namespace std;
 
 const unsigned NUM_ROW = 3;
-const unsigned NUM_COL = 3;
+const unsigned NUM_COL = NUM_ROW;
 const unsigned NUM_PLATE = NUM_ROW * NUM_COL;
+const unsigned STOP_CONDITION = 5;
 
 const string STATE_SAVE_FILE_PATH = "../dat/ff14_minipot.csv";
 
@@ -28,9 +30,94 @@ struct pair_hash
 
 struct MiniPotSolver
 {
+    unordered_map<unsigned, unsigned> rotate_90d_plate_idx_lookup;
+    unordered_map<unsigned, unsigned> flip_horizontal_plate_idx_lookup;
+    unordered_map<unsigned, unsigned> flip_vertical_plate_idx_lookup;
+
+    unordered_map<unsigned, unsigned> rotate_90d_line_idx_lookup;
+    unordered_map<unsigned, unsigned> flip_horizontal_line_idx_lookup;
+    unordered_map<unsigned, unsigned> flip_vertical_line_idx_lookup;
+
     unordered_map<string, double> dp_concealed_states;
-    unordered_map<pair<string, unsigned>, double, pair_hash> dp_disclosed_states;
+    // `dp_disclosed_states` can better help us know what happened in the DP process.
+    // unordered_map<pair<string, unsigned>, double, pair_hash> dp_disclosed_states;
     unordered_map<string, vector<unsigned>> dp_choice_states;
+
+    void generate_rotate_90d_lookups()
+    {
+        for (unsigned row_idx = 0; row_idx < NUM_ROW; row_idx += 1)
+        {
+            for (unsigned col_idx = 0; col_idx < NUM_COL; col_idx += 1)
+            {
+                unsigned plate_idx = row_idx * NUM_COL + col_idx;
+                unsigned n_plate_idx = col_idx * NUM_COL + (NUM_COL - 1 - row_idx);
+                rotate_90d_plate_idx_lookup[plate_idx] = n_plate_idx;
+            }
+        }
+        for (unsigned row_idx = 0; row_idx < NUM_ROW; row_idx += 1)
+        {
+            rotate_90d_line_idx_lookup[row_idx] = NUM_ROW + (NUM_COL - 1 - row_idx);
+        }
+        for (unsigned col_idx = 0; col_idx < NUM_COL; col_idx += 1)
+        {
+            rotate_90d_line_idx_lookup[NUM_ROW + col_idx] = col_idx;
+        }
+        rotate_90d_line_idx_lookup[NUM_ROW + NUM_COL] = NUM_ROW + NUM_COL + 1;
+        rotate_90d_line_idx_lookup[NUM_ROW + NUM_COL + 1] = NUM_ROW + NUM_COL;
+    }
+
+    void generate_flip_horizontal_lookups()
+    {
+        for (unsigned row_idx = 0; row_idx < NUM_ROW; row_idx += 1)
+        {
+            for (unsigned col_idx = 0; col_idx < NUM_COL; col_idx += 1)
+            {
+                unsigned plate_idx = row_idx * NUM_COL + col_idx;
+                unsigned n_plate_idx = row_idx * NUM_COL + (NUM_COL - 1 - col_idx);
+                flip_horizontal_plate_idx_lookup[plate_idx] = n_plate_idx;
+            }
+        }
+        for (unsigned row_idx = 0; row_idx < NUM_ROW; row_idx += 1)
+        {
+            flip_horizontal_line_idx_lookup[row_idx] = row_idx;
+        }
+        for (unsigned col_idx = 0; col_idx < NUM_COL; col_idx += 1)
+        {
+            flip_horizontal_line_idx_lookup[NUM_ROW + col_idx] = NUM_ROW + (NUM_COL - 1 - col_idx);
+        }
+        flip_horizontal_line_idx_lookup[NUM_ROW + NUM_COL] = NUM_ROW + NUM_COL + 1;
+        flip_horizontal_line_idx_lookup[NUM_ROW + NUM_COL + 1] = NUM_ROW + NUM_COL;
+    }
+
+    void generate_flip_vertical_lookups()
+    {
+        for (unsigned row_idx = 0; row_idx < NUM_ROW; row_idx += 1)
+        {
+            for (unsigned col_idx = 0; col_idx < NUM_COL; col_idx += 1)
+            {
+                unsigned plate_idx = row_idx * NUM_COL + col_idx;
+                unsigned n_plate_idx = (NUM_ROW - 1 - row_idx) * NUM_COL + col_idx;
+                flip_vertical_plate_idx_lookup[plate_idx] = n_plate_idx;
+            }
+        }
+        for (unsigned row_idx = 0; row_idx < NUM_ROW; row_idx += 1)
+        {
+            flip_vertical_line_idx_lookup[row_idx] = NUM_ROW - 1 - row_idx;
+        }
+        for (unsigned col_idx = 0; col_idx < NUM_COL; col_idx += 1)
+        {
+            flip_vertical_line_idx_lookup[NUM_ROW + col_idx] = NUM_ROW + col_idx;
+        }
+        flip_vertical_line_idx_lookup[NUM_ROW + NUM_COL] = NUM_ROW + NUM_COL + 1;
+        flip_vertical_line_idx_lookup[NUM_ROW + NUM_COL + 1] = NUM_ROW + NUM_COL;
+    }
+
+    MiniPotSolver()
+    {
+        generate_rotate_90d_lookups();
+        generate_flip_horizontal_lookups();
+        generate_flip_vertical_lookups();
+    }
 
     double get_reward(unsigned int score)
     {
@@ -79,8 +166,6 @@ struct MiniPotSolver
         }
     }
 
-    MiniPotSolver() {}
-
     void generate_complete_states(unsigned plate_idx, string state, vector<bool> &b_used_plate_idxes, vector<string> &completed_states)
     {
         if (plate_idx == NUM_PLATE)
@@ -109,6 +194,27 @@ struct MiniPotSolver
         state[plate_idx] = cached_c_plate_val;
     }
 
+    string transform(const string &state, const unordered_map<unsigned, unsigned> &plate_idx_lookup)
+    {
+        string n_state = state;
+        for (auto key_val_pair : plate_idx_lookup)
+        {
+            n_state[key_val_pair.second] = state[key_val_pair.first];
+        }
+        return n_state;
+    }
+
+    vector<unsigned> transform(const vector<unsigned> choice_state, const unordered_map<unsigned, unsigned> &plate_idx_lookup)
+    {
+        vector<unsigned> n_choice_state = choice_state;
+        for (unsigned choice_idx = 0; choice_idx < choice_state.size(); choice_idx += 1)
+        {
+            n_choice_state[choice_idx] = plate_idx_lookup.at(choice_state[choice_idx]);
+        }
+        sort(n_choice_state.begin(), n_choice_state.end());
+        return n_choice_state;
+    }
+
     double dp(string state, unsigned available_plate_cnt, vector<bool> &b_used_plate_idxes)
     {
         if (dp_concealed_states.find(state) != dp_concealed_states.end())
@@ -116,12 +222,11 @@ struct MiniPotSolver
             return dp_concealed_states[state];
         }
 
-        if (available_plate_cnt == 5)
+        double max_reward = 0;
+        if (available_plate_cnt == STOP_CONDITION)
         {
             vector<string> completed_states;
             generate_complete_states(0, state, b_used_plate_idxes, completed_states);
-
-            double max_reward = 0;
 
             // row-wise; encoded from 0~2
             for (unsigned row_idx = 0; row_idx < NUM_ROW; row_idx += 1)
@@ -132,7 +237,7 @@ struct MiniPotSolver
                     unsigned score = 0;
                     for (unsigned col_idx = 0; col_idx < NUM_COL; col_idx += 1)
                     {
-                        unsigned plate_idx = NUM_COL * row_idx + col_idx;
+                        unsigned plate_idx = row_idx * NUM_COL + col_idx;
                         score += completed_state[plate_idx] - '0';
                     }
                     avg_reward += get_reward(score);
@@ -192,11 +297,11 @@ struct MiniPotSolver
                 if (avg_reward > max_reward)
                 {
                     max_reward = avg_reward;
-                    dp_choice_states[state] = {6};
+                    dp_choice_states[state] = {NUM_ROW + NUM_COL};
                 }
                 else if (avg_reward == max_reward)
                 {
-                    dp_choice_states[state].push_back(6);
+                    dp_choice_states[state].push_back(NUM_ROW + NUM_COL);
                 }
             }
 
@@ -217,49 +322,83 @@ struct MiniPotSolver
                 if (avg_reward > max_reward)
                 {
                     max_reward = avg_reward;
-                    dp_choice_states[state] = {7};
+                    dp_choice_states[state] = {NUM_ROW + NUM_COL + 1};
                 }
                 else if (avg_reward == max_reward)
                 {
-                    dp_choice_states[state].push_back(7);
+                    dp_choice_states[state].push_back(NUM_ROW + NUM_COL + 1);
                 }
             }
-
-            return dp_concealed_states[state] = max_reward;
         }
-
-        double max_reward = 0;
-        for (unsigned plate_idx = 0; plate_idx < NUM_PLATE; plate_idx += 1)
+        else
         {
-            if (state[plate_idx] == '0')
+            for (unsigned plate_idx = 0; plate_idx < NUM_PLATE; plate_idx += 1)
             {
-                double avg_reward = 0;
-                for (unsigned plate_val = 0; plate_val < NUM_PLATE; plate_val += 1)
+                if (state[plate_idx] == '0')
                 {
-                    if (!b_used_plate_idxes[plate_val])
+                    double avg_reward = 0;
+                    for (unsigned plate_val = 0; plate_val < NUM_PLATE; plate_val += 1)
                     {
-                        char c_plate_val = '0' + plate_val + 1;
-                        state[plate_idx] = c_plate_val;
-                        b_used_plate_idxes[plate_val] = true;
-                        avg_reward += dp(state, available_plate_cnt - 1, b_used_plate_idxes);
-                        b_used_plate_idxes[plate_val] = false;
+                        if (!b_used_plate_idxes[plate_val])
+                        {
+                            char c_plate_val = '0' + plate_val + 1;
+                            state[plate_idx] = c_plate_val;
+                            b_used_plate_idxes[plate_val] = true;
+                            avg_reward += dp(state, available_plate_cnt - 1, b_used_plate_idxes);
+                            b_used_plate_idxes[plate_val] = false;
+                        }
+                    }
+                    state[plate_idx] = '0';
+                    avg_reward /= available_plate_cnt;
+
+                    // dp_disclosed_states[make_pair(state, plate_idx)] = avg_reward;
+
+                    if (avg_reward > max_reward)
+                    {
+                        max_reward = avg_reward;
+                        dp_choice_states[state] = {plate_idx};
+                    }
+                    else if (avg_reward == max_reward)
+                    {
+                        dp_choice_states[state].push_back(plate_idx);
                     }
                 }
-                state[plate_idx] = '0';
-                avg_reward /= available_plate_cnt;
-
-                dp_disclosed_states[make_pair(state, plate_idx)] = avg_reward;
-
-                if (avg_reward > max_reward)
-                {
-                    max_reward = avg_reward;
-                    dp_choice_states[state] = {plate_idx};
-                }
-                else if (avg_reward == max_reward)
-                {
-                    dp_choice_states[state].push_back(plate_idx);
-                }
             }
+        }
+
+        // Update all three rotated states, to save repeated visits
+        {
+            string n_state = state;
+            vector<unsigned> n_choice_state = dp_choice_states[state];
+            for (unsigned rotate_idx = 1; rotate_idx < 4; rotate_idx += 1)
+            {
+                n_state = transform(n_state, rotate_90d_plate_idx_lookup);
+                n_choice_state = available_plate_cnt == STOP_CONDITION
+                                     ? transform(n_choice_state, rotate_90d_line_idx_lookup)
+                                     : transform(n_choice_state, rotate_90d_plate_idx_lookup);
+                dp_concealed_states[n_state] = max_reward;
+                dp_choice_states[n_state] = n_choice_state;
+            }
+        }
+
+        // Update flip horizontal state, to save repeated visits
+        {
+            string n_state = transform(state, flip_horizontal_plate_idx_lookup);
+            vector<unsigned> n_choice_state = available_plate_cnt == STOP_CONDITION
+                                                  ? transform(dp_choice_states[state], flip_horizontal_line_idx_lookup)
+                                                  : transform(dp_choice_states[state], flip_horizontal_plate_idx_lookup);
+            dp_concealed_states[n_state] = max_reward;
+            dp_choice_states[n_state] = n_choice_state;
+        }
+
+        // Update flip veritical state, to save repeated visits
+        {
+            string n_state = transform(state, flip_vertical_plate_idx_lookup);
+            vector<unsigned> n_choice_state = available_plate_cnt == STOP_CONDITION
+                                                  ? transform(dp_choice_states[state], flip_vertical_line_idx_lookup)
+                                                  : transform(dp_choice_states[state], flip_vertical_plate_idx_lookup);
+            dp_concealed_states[n_state] = max_reward;
+            dp_choice_states[n_state] = n_choice_state;
         }
 
         return dp_concealed_states[state] = max_reward;
