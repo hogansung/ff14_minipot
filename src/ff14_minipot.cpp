@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -273,10 +274,12 @@ struct MiniPotSolver
 
     void save_as_csv()
     {
+        map<string, double> sorted_dp_concealed_states(dp_concealed_states.begin(), dp_concealed_states.end());
+
         FILE *pfile = fopen(STATE_SAVE_FILE_PATH.c_str(), "w");
         assert(pfile);
         fprintf(pfile, "state,avg_reward,best_choices\n");
-        for (auto key_val_pair : dp_concealed_states)
+        for (auto key_val_pair : sorted_dp_concealed_states)
         {
             string state = key_val_pair.first;
             double concealed_val = key_val_pair.second;
